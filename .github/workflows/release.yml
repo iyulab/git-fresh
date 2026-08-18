@@ -1,10 +1,14 @@
 name: Release
 
-# Scaffolded, not yet exercised — see claudedocs/cycle-logs/cycle-05.md. Publishing to npm needs
-# a one-time human step first: configure this repo + this workflow file as a "Trusted Publisher"
-# for @iyulab/git-fresh in the package's npm settings (https://docs.npmjs.com/trusted-publishers/).
-# Trusted publishing needs no npm token/secret at all — `id-token: write` below is what lets the
-# npm CLI authenticate via GitHub's OIDC token instead.
+# Version-bump PR / publish automation via changesets. Authenticates to npm with the org-level
+# `NPM_TOKEN` secret (mapped to NODE_AUTH_TOKEN, the env var actions/setup-node's generated
+# .npmrc reads); `id-token: write` is kept alongside it so npm can still attach a provenance
+# attestation (NPM_CONFIG_PROVENANCE below) even though auth itself is token-based, not OIDC
+# trusted publishing.
+#
+# The very first release (0.1.0) needs a changeset to exist before this workflow has anything to
+# version/publish — if none exists yet, either publish 0.1.0 by hand once (see the project's
+# publish notes) or run `npx changeset add` before merging to main.
 
 on:
   push:
@@ -39,3 +43,5 @@ jobs:
           publish-script: npx changeset publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
