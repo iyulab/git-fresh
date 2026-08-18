@@ -51,10 +51,19 @@ function isPathContained(parentDir, candidatePath) {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
+/**
+ * Returns `{ ok: true }` on success, or `{ ok: false, stderr }` on failure — `stderr` is the
+ * fallback `checkout` attempt's own error text (e.g. "pathspec '<branch>' did not match any
+ * file(s) known to git" when `.gitmodules` names a branch that no longer exists), the only
+ * evidence available for *why* a switch that reached this point still failed. Without it,
+ * `branch-switch-failed` was the one failure reason with no `detail` — an AI agent resuming from
+ * this stop had a reason string and nothing to diagnose it with.
+ */
 function switchBranch(cwd, branch) {
   const switched = runGit(['switch', '--quiet', branch], { cwd, allowFailure: true });
-  if (switched.ok) return true;
-  return runGit(['checkout', '--quiet', branch], { cwd, allowFailure: true }).ok;
+  if (switched.ok) return { ok: true };
+  const checkedOut = runGit(['checkout', '--quiet', branch], { cwd, allowFailure: true });
+  return checkedOut.ok ? { ok: true } : { ok: false, stderr: checkedOut.stderr };
 }
 
 /**
@@ -62,12 +71,23 @@ function switchBranch(cwd, branch) {
  * switch to its target branch if not already on it (only reachable once safety has already been
  * confirmed), then update.
  *
- * `dryRun` skips the mutating switch/merge and previews instead. It can't actually check out
- * `targetBranch` to discover its real upstream without mutating, so when a switch would be
- * needed it previews against `origin/<targetBranch>` — the ref a `git switch`/`checkout` DWIM
- * checkout would track by convention. This assumes a single `origin` remote; an unconventional
- * setup would make the preview inaccurate, but the real (non-dry-run) run is unaffected, since it
- * re-resolves the upstream for real after actually switching.
+ * `dryRun` skips the mutating switch/merge and previews instead. When `targetBranch` already
+ * exists locally, `assessLocalBranchSafety` reads its real upstream and push status without
+ * checking it out, so the preview is exact. Only when `targetBranch` doesn't exist locally yet
+ * does it fall back to previewing against `origin/<targetBranch>` — the ref a `git switch`/
+ * `checkout` DWIM checkout would track by convention, since there's no local branch to query.
+ * That fallback assumes a single `origin` remote; an unconventional setup would make the preview
+ * inaccurate, but the real (non-dry-run) run is unaffected either way, since it re-resolves the
+ * upstream for real after actually switching.
+ *
+ * The first `assessBranchSafety` call below judges the branch this submodule is *currently* on —
+ * not `targetBranch` when a switch is needed. A target branch that already exists locally (left
+ * over from earlier work in this submodule, or restored by `initSubmodules`) can carry its own
+ * unpushed commits that the pre-switch check never saw. Both the real run (re-running
+ * `assessBranchSafety` after actually switching) and the `dryRun` preview (via
+ * `assessLocalBranchSafety`, below) close that gap — without it, a branch with unpushed local
+ * commits would be fast-forwarded straight past, or previewed as if it would be, exactly the
+ * state this tool exists to stop on.
  */
 function processSubmodule(cwd, targetBranch, { dryRun = false } = {}) {
   runGit(['fetch', '--all', '--prune', '--quiet'], { cwd });
@@ -78,18 +98,32 @@ function processSubmodule(cwd, targetBranch, { dryRun = false } = {}) {
 
   const safety = checks.assessBranchSafety(cwd);
   if (!safety.safe) {
-    return {
-      ok: false,
-      reason: safety.reason,
-      branch: safety.branch,
-      detail: safety.reason === 'unpushed' ? checks.getUnpushedCommits(cwd, safety.upstream) : null,
-    };
+    return checks.describeUnsafeBranch(cwd, safety);
   }
 
   const wouldSwitch = safety.branch !== targetBranch;
 
   if (dryRun) {
-    const previewUpstream = wouldSwitch ? `origin/${targetBranch}` : safety.upstream;
+    if (!wouldSwitch) {
+      return {
+        branch: targetBranch,
+        wouldSwitch,
+        ...merge.mergeOntoUpstream(cwd, safety.upstream, { dryRun: true }),
+      };
+    }
+
+    // targetBranch may already exist locally (e.g. left over from earlier work in this
+    // submodule) with its own unpushed commits — assessLocalBranchSafety judges *that* branch
+    // without checking it out, closing the same blind spot the real (non-dry-run) path closed
+    // above. If it doesn't exist locally yet, a real switch would create it fresh tracking a
+    // remote branch, so fall back to the origin/<targetBranch> DWIM convention.
+    const localTargetSafety = checks.assessLocalBranchSafety(cwd, targetBranch);
+    if (localTargetSafety && !localTargetSafety.safe) {
+      return {
+        ...checks.describeUnsafeBranch(cwd, localTargetSafety), wouldSwitch, dryRun: true,
+      };
+    }
+    const previewUpstream = localTargetSafety ? localTargetSafety.upstream : `origin/${targetBranch}`;
     return {
       branch: targetBranch,
       wouldSwitch,
@@ -97,16 +131,23 @@ function processSubmodule(cwd, targetBranch, { dryRun = false } = {}) {
     };
   }
 
-  if (wouldSwitch && !switchBranch(cwd, targetBranch)) {
-    return { ok: false, reason: 'branch-switch-failed', branch: targetBranch };
+  if (!wouldSwitch) {
+    return { branch: targetBranch, ...merge.mergeOntoUpstream(cwd, safety.upstream) };
   }
 
-  const upstream = checks.getUpstream(cwd);
-  if (upstream === null) {
-    return { ok: false, reason: 'no-upstream', branch: targetBranch };
+  const switched = switchBranch(cwd, targetBranch);
+  if (!switched.ok) {
+    return {
+      ok: false, reason: 'branch-switch-failed', branch: targetBranch, detail: switched.stderr,
+    };
   }
 
-  return { branch: targetBranch, ...merge.mergeOntoUpstream(cwd, upstream) };
+  const targetSafety = checks.assessBranchSafety(cwd);
+  if (!targetSafety.safe) {
+    return checks.describeUnsafeBranch(cwd, targetSafety);
+  }
+
+  return { branch: targetBranch, ...merge.mergeOntoUpstream(cwd, targetSafety.upstream) };
 }
 
 /**

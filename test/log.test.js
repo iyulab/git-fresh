@@ -49,6 +49,35 @@ test('formatHuman: a conflict lists each conflicted file', () => {
   assert.match(output, /b\.txt/);
 });
 
+test('formatHuman: a conflict also states which upstream it conflicted against, when known', () => {
+  const output = log.formatHuman({
+    ok: false,
+    main: {
+      ok: false, reason: 'conflict', branch: 'main', upstream: 'origin/main', conflicted: ['a.txt'],
+    },
+    submodules: [],
+  });
+
+  assert.match(output, /against origin\/main/);
+  assert.match(output, /conflicted files:/);
+});
+
+test('formatHuman: a branch-switch failure surfaces the git error, when known', () => {
+  const output = log.formatHuman({
+    ok: false,
+    main: {
+      ok: false,
+      reason: 'branch-switch-failed',
+      branch: 'release',
+      detail: "error: pathspec 'release' did not match any file(s) known to git",
+    },
+    submodules: [],
+  });
+
+  assert.match(output, /\[main] branch-switch-failed/);
+  assert.match(output, /did not match any file/);
+});
+
 test('formatHuman: a dry-run success says so without claiming a real update happened', () => {
   const output = log.formatHuman({
     ok: true,

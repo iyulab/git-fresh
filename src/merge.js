@@ -114,6 +114,11 @@ function previewUpdate(cwd, upstream) {
  * result the same way either caller needs. Deliberately leaves `branch` out — the caller adds
  * it, since a main repo's is simply its current branch while a submodule's is its *target*
  * branch, which can differ from what it's currently on.
+ *
+ * Always includes `upstream` itself in the result — the ref this merge/preview ran against.
+ * Without it, a `conflict`/`would-conflict` failure named which files but not what they conflicted
+ * with, leaving an agent to infer the merge target from `branch` (main repo) or the target branch
+ * (submodule) instead of being told directly.
  */
 function mergeOntoUpstream(cwd, upstream, { dryRun = false } = {}) {
   if (dryRun) {
@@ -121,6 +126,7 @@ function mergeOntoUpstream(cwd, upstream, { dryRun = false } = {}) {
     return {
       ok: preview.ok,
       dryRun: true,
+      upstream,
       strategy: preview.strategy,
       conflicted: preview.conflicted,
       reason: preview.ok ? null : 'would-conflict',
@@ -129,9 +135,13 @@ function mergeOntoUpstream(cwd, upstream, { dryRun = false } = {}) {
 
   const result = updateToTarget(cwd, upstream);
   if (!result.ok) {
-    return { ok: false, reason: 'conflict', conflicted: result.conflicted };
+    return {
+      ok: false, reason: 'conflict', upstream, conflicted: result.conflicted,
+    };
   }
-  return { ok: true, head: result.head, strategy: result.strategy };
+  return {
+    ok: true, upstream, head: result.head, strategy: result.strategy,
+  };
 }
 
 module.exports = {

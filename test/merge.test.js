@@ -133,6 +133,43 @@ test('previewUpdate: reports a clean merge without touching HEAD or the worktree
   assert.equal(checks.isDirty(fixture.cloneDir), false);
 });
 
+test('mergeOntoUpstream: reports which upstream it ran against, on conflict and on would-conflict', (t) => {
+  const base = mkTempDir('git-fresh-mergeontoupstream-conflict-');
+  t.after(() => cleanup(base));
+  const fixture = withSharedFile(initBareAndClone(base));
+
+  commitFile(fixture.cloneDir, 'shared.txt', 'local change\n', 'local edits shared.txt');
+  commitFile(fixture.seedDir, 'shared.txt', 'remote change\n', 'remote edits shared.txt');
+  git(fixture.seedDir, ['push', '--quiet', 'origin', 'main']);
+  git(fixture.cloneDir, ['fetch', '--quiet']);
+
+  const conflictResult = merge.mergeOntoUpstream(fixture.cloneDir, 'origin/main');
+  assert.equal(conflictResult.ok, false);
+  assert.equal(conflictResult.reason, 'conflict');
+  assert.equal(conflictResult.upstream, 'origin/main');
+  assert.deepEqual(conflictResult.conflicted, ['shared.txt']);
+
+  const dryRunResult = merge.mergeOntoUpstream(fixture.cloneDir, 'origin/main', { dryRun: true });
+  assert.equal(dryRunResult.ok, false);
+  assert.equal(dryRunResult.reason, 'would-conflict');
+  assert.equal(dryRunResult.upstream, 'origin/main');
+});
+
+test('mergeOntoUpstream: reports which upstream it ran against, on a successful fast-forward too', (t) => {
+  const base = mkTempDir('git-fresh-mergeontoupstream-ff-');
+  t.after(() => cleanup(base));
+  const fixture = initBareAndClone(base);
+
+  commitFile(fixture.seedDir, 'new.txt', 'remote change\n', 'remote advances');
+  git(fixture.seedDir, ['push', '--quiet', 'origin', 'main']);
+  git(fixture.cloneDir, ['fetch', '--quiet']);
+
+  const result = merge.mergeOntoUpstream(fixture.cloneDir, 'origin/main');
+  assert.equal(result.ok, true);
+  assert.equal(result.strategy, 'fast-forward');
+  assert.equal(result.upstream, 'origin/main');
+});
+
 test('previewUpdate: reports conflicted files without touching HEAD or the worktree', (t) => {
   const base = mkTempDir('git-fresh-preview-conflict-');
   t.after(() => cleanup(base));

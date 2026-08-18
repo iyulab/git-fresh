@@ -27,12 +27,7 @@ function processMainRepo(cwd, { dryRun = false } = {}) {
   }
 
   if (!safety.safe) {
-    return {
-      ok: false,
-      reason: safety.reason,
-      branch: safety.branch,
-      detail: safety.reason === 'unpushed' ? checks.getUnpushedCommits(cwd, safety.upstream) : null,
-    };
+    return checks.describeUnsafeBranch(cwd, safety);
   }
 
   return { branch: safety.branch, ...merge.mergeOntoUpstream(cwd, safety.upstream, { dryRun }) };

@@ -16,14 +16,18 @@ function reasonDetail(result) {
     case 'no-upstream':
       return `branch '${result.branch}' has no upstream configured (push status can't be verified)`;
     case 'branch-switch-failed':
-      return `could not switch to '${result.branch}'`;
+      return result.detail
+        ? `could not switch to '${result.branch}':\n${result.detail}`
+        : `could not switch to '${result.branch}'`;
     case 'unsafe-path':
       return result.detail || '';
     case 'conflict':
-    case 'would-conflict':
+    case 'would-conflict': {
+      const against = result.upstream ? `against ${result.upstream}\n` : '';
       return Array.isArray(result.conflicted) && result.conflicted.length > 0
-        ? `conflicted files:\n${result.conflicted.map((f) => `  ${f}`).join('\n')}`
-        : 'conflict (specific files unknown — preview only)';
+        ? `${against}conflicted files:\n${result.conflicted.map((f) => `  ${f}`).join('\n')}`
+        : `${against}conflict (specific files unknown — preview only)`;
+    }
     default:
       return '';
   }

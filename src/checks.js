@@ -19,28 +19,41 @@ function getCurrentBranch(cwd) {
   return result.ok && result.stdout ? result.stdout : null;
 }
 
-/** The branch's configured upstream (e.g. "origin/main"), or null if unset. */
-function getUpstream(cwd) {
+/**
+ * `ref`'s configured upstream (e.g. "origin/main"), or null if unset. `ref` defaults to `HEAD`
+ * (the currently checked-out branch); passing a branch name checks *that* branch's upstream
+ * without checking it out, which `assessLocalBranchSafety` uses to preview a branch git-fresh
+ * hasn't switched onto (yet, or at all, under `--dry-run`).
+ */
+function getUpstream(cwd, ref = 'HEAD') {
   const result = runGit(
-    ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+    ['rev-parse', '--abbrev-ref', '--symbolic-full-name', `${ref}@{u}`],
     { cwd, allowFailure: true },
   );
   return result.ok && result.stdout ? result.stdout : null;
 }
 
-/** Count of local commits not present on `upstream`. */
-function getAheadCount(cwd, upstream) {
-  const result = runGit(['rev-list', '--count', `${upstream}..HEAD`], { cwd, allowFailure: true });
+/** Count of `ref`'s local commits not present on `upstream`. `ref` defaults to `HEAD`. */
+function getAheadCount(cwd, upstream, ref = 'HEAD') {
+  const result = runGit(['rev-list', '--count', `${upstream}..${ref}`], { cwd, allowFailure: true });
   if (!result.ok || !result.stdout) return 0;
   const n = Number.parseInt(result.stdout, 10);
   return Number.isNaN(n) ? 0 : n;
 }
 
-/** One-line summaries of local commits not present on `upstream`. */
-function getUnpushedCommits(cwd, upstream) {
-  const result = runGit(['log', '--oneline', `${upstream}..HEAD`], { cwd, allowFailure: true });
+/** One-line summaries of `ref`'s local commits not present on `upstream`. `ref` defaults to `HEAD`. */
+function getUnpushedCommits(cwd, upstream, ref = 'HEAD') {
+  const result = runGit(['log', '--oneline', `${upstream}..${ref}`], { cwd, allowFailure: true });
   if (!result.ok || !result.stdout) return [];
   return result.stdout.split('\n').filter(Boolean);
+}
+
+/** True if `branch` exists as a local branch, whether or not it's currently checked out. */
+function branchExistsLocally(cwd, branch) {
+  return runGit(
+    ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+    { cwd, allowFailure: true },
+  ).ok;
 }
 
 /** Short hash of the current HEAD commit. */
@@ -86,6 +99,54 @@ function assessBranchSafety(cwd) {
   };
 }
 
+/**
+ * Non-mutating counterpart to `assessBranchSafety`, for judging a *different* local branch than
+ * the one currently checked out — the case `assessBranchSafety` can't cover, since it only ever
+ * reads `HEAD`. Used to preview a submodule's target branch under `--dry-run` without checking it
+ * out: a branch that already exists locally can carry its own unpushed commits regardless of
+ * whether anything is currently checked out onto it.
+ *
+ * Returns `null` if `branch` doesn't exist locally at all — nothing to judge, since a real switch
+ * would create it fresh, tracking a remote branch, with nothing local yet to have gone unpushed.
+ */
+function assessLocalBranchSafety(cwd, branch) {
+  if (!branchExistsLocally(cwd, branch)) return null;
+
+  const upstream = getUpstream(cwd, branch);
+  if (upstream === null) {
+    return {
+      branch, upstream: null, ahead: null, safe: false, reason: 'no-upstream',
+    };
+  }
+
+  const ahead = getAheadCount(cwd, upstream, branch);
+  if (ahead > 0) {
+    return {
+      branch, upstream, ahead, safe: false, reason: 'unpushed',
+    };
+  }
+
+  return {
+    branch, upstream, ahead: 0, safe: true, reason: null,
+  };
+}
+
+/**
+ * Shapes an unsafe `assessBranchSafety`/`assessLocalBranchSafety` result into the
+ * `{ ok: false, reason, branch, detail }` failure `main-repo.js`/`submodules.js` return — pulling
+ * the unpushed-commit evidence (against `safety.branch`, not always `HEAD` — the two composites
+ * above agree on that field either way) only when the reason calls for it. Callers must have
+ * already checked `!safety.safe`.
+ */
+function describeUnsafeBranch(cwd, safety) {
+  return {
+    ok: false,
+    reason: safety.reason,
+    branch: safety.branch,
+    detail: safety.reason === 'unpushed' ? getUnpushedCommits(cwd, safety.upstream, safety.branch) : null,
+  };
+}
+
 module.exports = {
   isDirty,
   getDirtyStatus,
@@ -94,5 +155,8 @@ module.exports = {
   getAheadCount,
   getUnpushedCommits,
   getHeadCommit,
+  branchExistsLocally,
   assessBranchSafety,
+  assessLocalBranchSafety,
+  describeUnsafeBranch,
 };

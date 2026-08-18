@@ -145,6 +145,57 @@ test('--dry-run: previews the submodule fast-forward without mutating anything',
   assert.equal(checks.isDirty(fixture.workspaceDir), false);
 });
 
+test('--dry-run: a target branch that already exists locally with its own unpushed commit is caught, not previewed as safe', (t) => {
+  const base = mkTempDir('git-fresh-orch-dryrun-unpushed-target-');
+  t.after(() => cleanup(base));
+  const fixture = initMainWithSubmodule(base);
+
+  git(fixture.subDir, ['switch', '--quiet', '-c', 'release']);
+  git(fixture.subDir, ['push', '--quiet', '-u', 'origin', 'release']);
+  commitFile(fixture.subDir, 'local-only.txt', 'never pushed\n', 'unpushed local commit on release');
+  const unpushedHead = git(fixture.subDir, ['rev-parse', 'HEAD']);
+  git(fixture.subDir, ['switch', '--quiet', 'main']);
+
+  git(fixture.workspaceDir, ['config', '-f', '.gitmodules', 'submodule.sub.branch', 'release']);
+
+  const subResults = submodules.processSubmodulesRecursive(fixture.workspaceDir, { dryRun: true });
+
+  assert.equal(subResults.length, 1);
+  assert.equal(subResults[0].ok, false);
+  assert.equal(subResults[0].dryRun, true);
+  assert.equal(subResults[0].wouldSwitch, true);
+  assert.equal(subResults[0].reason, 'unpushed');
+  assert.equal(subResults[0].branch, 'release');
+
+  // Confirms it's a genuine preview: still on 'main', 'release' untouched, nothing mutated in
+  // the submodule itself (the workspace's own .gitmodules is deliberately left dirty by this
+  // test's own setup above, so that's not a meaningful thing to assert on here).
+  assert.equal(git(fixture.subDir, ['branch', '--show-current']), 'main');
+  assert.equal(git(fixture.subDir, ['rev-parse', 'release']), unpushedHead);
+  assert.equal(checks.isDirty(fixture.subDir), false);
+});
+
+test('--dry-run: a target branch that already exists locally and is fully pushed previews its real upstream, not the origin/<branch> guess', (t) => {
+  const base = mkTempDir('git-fresh-orch-dryrun-existing-safe-target-');
+  t.after(() => cleanup(base));
+  const fixture = initMainWithSubmodule(base);
+
+  git(fixture.subDir, ['switch', '--quiet', '-c', 'release']);
+  git(fixture.subDir, ['push', '--quiet', '-u', 'origin', 'release']);
+  git(fixture.subDir, ['switch', '--quiet', 'main']);
+
+  git(fixture.workspaceDir, ['config', '-f', '.gitmodules', 'submodule.sub.branch', 'release']);
+
+  const subResults = submodules.processSubmodulesRecursive(fixture.workspaceDir, { dryRun: true });
+
+  assert.equal(subResults.length, 1);
+  assert.equal(subResults[0].ok, true);
+  assert.equal(subResults[0].dryRun, true);
+  assert.equal(subResults[0].wouldSwitch, true);
+  assert.equal(subResults[0].upstream, 'origin/release');
+  assert.equal(git(fixture.subDir, ['branch', '--show-current']), 'main');
+});
+
 test('--branch override forces every submodule onto the given branch, ignoring .gitmodules', (t) => {
   const base = mkTempDir('git-fresh-orch-branchoverride-');
   t.after(() => cleanup(base));
@@ -201,6 +252,53 @@ test('recursion: a failure at the nested level stops without corrupting the oute
   assert.equal(subResults[1].label, 'sub/nested');
   assert.equal(subResults[1].ok, false);
   assert.equal(subResults[1].reason, 'no-upstream');
+});
+
+test('a target branch that already exists locally with its own unpushed commit stops the switch, not just a branch that never existed', (t) => {
+  const base = mkTempDir('git-fresh-orch-switchtarget-unpushed-');
+  t.after(() => cleanup(base));
+  const fixture = initMainWithSubmodule(base);
+
+  // Give the submodule's *target* branch ('release') local, unpushed work — created directly in
+  // the workspace clone, the way stray local work left over from a previous session would exist.
+  // The submodule is currently on 'main' (from initSubmodules), so `assessBranchSafety`'s one
+  // pre-switch check sees 'main' (safe), not 'release'.
+  git(fixture.subDir, ['switch', '--quiet', '-c', 'release']);
+  git(fixture.subDir, ['push', '--quiet', '-u', 'origin', 'release']);
+  commitFile(fixture.subDir, 'local-only.txt', 'never pushed\n', 'unpushed local commit on release');
+  const unpushedHead = git(fixture.subDir, ['rev-parse', 'HEAD']);
+  git(fixture.subDir, ['switch', '--quiet', 'main']);
+
+  git(fixture.workspaceDir, ['config', '-f', '.gitmodules', 'submodule.sub.branch', 'release']);
+
+  const subResults = submodules.processSubmodulesRecursive(fixture.workspaceDir);
+
+  assert.equal(subResults.length, 1);
+  assert.equal(subResults[0].ok, false);
+  assert.equal(subResults[0].reason, 'unpushed');
+  assert.equal(subResults[0].branch, 'release');
+  // Confirms the switch actually happened before the re-check caught it (that's the point of the
+  // fix — it must inspect the branch it switched *onto*, not the one it switched *from*), and
+  // that the unpushed commit was left alone, not silently merged past.
+  assert.equal(git(fixture.subDir, ['branch', '--show-current']), 'release');
+  assert.equal(git(fixture.subDir, ['rev-parse', 'HEAD']), unpushedHead);
+});
+
+test('a .gitmodules branch that no longer exists anywhere fails the switch, with the git error attached', (t) => {
+  const base = mkTempDir('git-fresh-orch-branchswitchfail-');
+  t.after(() => cleanup(base));
+  const fixture = initMainWithSubmodule(base);
+
+  git(fixture.workspaceDir, ['config', '-f', '.gitmodules', 'submodule.sub.branch', 'does-not-exist']);
+
+  submodules.initSubmodules(fixture.workspaceDir);
+  const subResults = submodules.processSubmodulesRecursive(fixture.workspaceDir);
+
+  assert.equal(subResults.length, 1);
+  assert.equal(subResults[0].ok, false);
+  assert.equal(subResults[0].reason, 'branch-switch-failed');
+  assert.equal(subResults[0].branch, 'does-not-exist');
+  assert.match(subResults[0].detail, /does-not-exist/);
 });
 
 test('security: a .gitmodules path that escapes the repo is rejected, not followed', (t) => {
