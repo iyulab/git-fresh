@@ -1,6 +1,6 @@
 {
   "name": "@iyulab/git-fresh",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bring a git repo and all its submodules to a fresh, up-to-date state against their remotes, stopping immediately on anything that could lose local work.",
   "license": "MIT",
   "repository": {
