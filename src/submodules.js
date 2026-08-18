@@ -158,34 +158,44 @@ function processSubmodule(cwd, targetBranch, { dryRun = false } = {}) {
  *
  * `branchOverride` forces every submodule at every depth onto the same branch, ignoring each
  * level's own `.gitmodules` (CLI `--branch`). `dryRun` previews instead of mutating.
+ *
+ * `onEntry`, if given, is called with each submodule's result the moment it's known — before
+ * moving on to the next sibling or descending into that submodule's own submodules. A tree with
+ * many submodules can take a while; a caller that wants to report progress as it happens (rather
+ * than only once the whole recursive walk finishes) hooks in here instead of waiting for the
+ * returned array.
  */
 function processSubmodulesRecursive(cwd, {
-  branchOverride, labelPrefix = '', dryRun = false,
+  branchOverride, labelPrefix = '', dryRun = false, onEntry,
 } = {}) {
   const results = [];
+  const emit = (entry) => {
+    results.push(entry);
+    if (onEntry) onEntry(entry);
+  };
 
-  for (const entry of listSubmoduleEntries(cwd)) {
-    const label = labelPrefix ? `${labelPrefix}/${entry.path}` : entry.path;
+  for (const submoduleEntry of listSubmoduleEntries(cwd)) {
+    const label = labelPrefix ? `${labelPrefix}/${submoduleEntry.path}` : submoduleEntry.path;
 
-    if (!isPathContained(cwd, entry.path)) {
-      results.push({
+    if (!isPathContained(cwd, submoduleEntry.path)) {
+      emit({
         label,
         ok: false,
         reason: 'unsafe-path',
-        detail: `.gitmodules path '${entry.path}' escapes the repo — refusing to follow it`,
+        detail: `.gitmodules path '${submoduleEntry.path}' escapes the repo — refusing to follow it`,
       });
       return results;
     }
 
-    const targetBranch = branchOverride || entry.branch;
-    const submoduleCwd = path.join(cwd, entry.path);
+    const targetBranch = branchOverride || submoduleEntry.branch;
+    const submoduleCwd = path.join(cwd, submoduleEntry.path);
 
     const result = processSubmodule(submoduleCwd, targetBranch, { dryRun });
-    results.push({ label, ...result });
+    emit({ label, ...result });
     if (!result.ok) return results;
 
     const nested = processSubmodulesRecursive(submoduleCwd, {
-      branchOverride, labelPrefix: label, dryRun,
+      branchOverride, labelPrefix: label, dryRun, onEntry,
     });
     results.push(...nested);
     if (nested.length > 0 && !nested[nested.length - 1].ok) return results;

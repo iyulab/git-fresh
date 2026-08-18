@@ -12,6 +12,7 @@ const {
 const checks = require('../src/checks');
 const mainRepo = require('../src/main-repo');
 const submodules = require('../src/submodules');
+const { run } = require('../src/run');
 
 // `03-TEST-SCENARIOS.md` scenarios A-E, ported to exercise `main-repo.js` + `submodules.js`
 // end-to-end instead of the bash reference implementation they were originally verified against.
@@ -114,6 +115,39 @@ test('scenario E: a different but fully-pushed submodule branch is safe to switc
   assert.equal(subResults[0].branch, 'main');
   assert.equal(subResults[0].strategy, 'fast-forward');
   assert.equal(checks.isDirty(fixture.workspaceDir), false);
+});
+
+test('run(): onEntry fires for the main repo and each submodule as soon as its result is known, not just once at the end', (t) => {
+  const base = mkTempDir('git-fresh-run-onentry-');
+  t.after(() => cleanup(base));
+  const fixture = initMainWithSubmodule(base);
+
+  const seen = [];
+  const result = run(fixture.workspaceDir, { onEntry: (entry) => seen.push(entry) });
+
+  assert.equal(result.ok, true);
+  // Streamed in processing order: main first, then each submodule as it's walked — the same
+  // entries the final returned object carries, not a separate or re-derived set.
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].label, 'main');
+  assert.equal(seen[0].ok, result.main.ok);
+  assert.equal(seen[1].label, 'sub');
+  assert.deepEqual(seen[1], { label: 'sub', ...result.submodules[0] });
+});
+
+test('run(): onEntry still fires for the main repo when it fails, even though no submodule is ever reached', (t) => {
+  const base = mkTempDir('git-fresh-run-onentry-mainfail-');
+  t.after(() => cleanup(base));
+  const fixture = initMainWithSubmodule(base);
+  fs.writeFileSync(path.join(fixture.workspaceDir, 'README.md'), 'uncommitted local edit\n');
+
+  const seen = [];
+  const result = run(fixture.workspaceDir, { onEntry: (entry) => seen.push(entry) });
+
+  assert.equal(result.ok, false);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].label, 'main');
+  assert.equal(seen[0].reason, 'dirty');
 });
 
 test('--dry-run: previews the submodule fast-forward without mutating anything', (t) => {

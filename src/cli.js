@@ -113,16 +113,25 @@ function main(argv, { cwd = process.cwd() } = {}) {
 
   git.setVerbose(opts.verbose);
 
+  // A run over many submodules can take a while. In human mode, print each repo's result the
+  // moment it's known instead of buffering the whole report until run() resolves — otherwise
+  // the terminal shows nothing at all for however long the run takes, indistinguishable from a
+  // hang. --json keeps printing one parseable blob at the end, since a script consuming it isn't
+  // watching a cursor.
+  const onEntry = opts.json
+    ? undefined
+    : (entry) => process.stdout.write(`${log.formatEntry(entry.label, entry)}\n`);
+
   let result;
   try {
-    result = run(path.resolve(cwd), { dryRun: opts.dryRun, branchOverride: opts.branch });
+    result = run(path.resolve(cwd), { dryRun: opts.dryRun, branchOverride: opts.branch, onEntry });
   } catch (err) {
     const detail = err.stderr ? err.stderr.toString().trim() : err.message;
     process.stderr.write(`unexpected error: ${detail}\n`);
     return EXIT_CODES.error;
   }
 
-  process.stdout.write(`${opts.json ? log.formatJson(result) : log.formatHuman(result)}\n`);
+  process.stdout.write(`${opts.json ? log.formatJson(result) : log.formatSummary(result)}\n`);
   return exitCodeFor(result);
 }
 

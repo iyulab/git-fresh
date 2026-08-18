@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  mkTempDir, initBareAndClone, commitFile, git, cleanup,
+  mkTempDir, initBareAndClone, initMainWithSubmodule, commitFile, git, cleanup,
 } = require('./fixtures/setup');
 
 const cli = require('../src/cli');
@@ -102,6 +102,32 @@ test('main: a clean repo exits 0 and reports success on stdout', (t) => {
 
   assert.equal(result, 0);
   assert.match(stdout, /done: fresh\./);
+});
+
+test('main: a submodule tree prints each repo\'s line as it\'s processed, not just a final blob', (t) => {
+  const base = mkTempDir('git-fresh-cli-streaming-');
+  t.after(() => cleanup(base));
+  const fixture = initMainWithSubmodule(base);
+
+  const seenAtWriteTime = [];
+  const origWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk) => { seenAtWriteTime.push(chunk); return true; };
+
+  let result;
+  try {
+    result = cli.main([], { cwd: fixture.workspaceDir });
+  } finally {
+    process.stdout.write = origWrite;
+  }
+
+  assert.equal(result, 0);
+  // Two entry lines plus the summary line, written as three separate stdout.write calls — not
+  // one call carrying the whole report, which is what would happen if output were still
+  // buffered until run() fully resolved.
+  assert.equal(seenAtWriteTime.length, 3);
+  assert.match(seenAtWriteTime[0], /\[main]/);
+  assert.match(seenAtWriteTime[1], /\[sub]/);
+  assert.match(seenAtWriteTime[2], /done: fresh\./);
 });
 
 test('main: --json prints a parseable, accurate result', (t) => {

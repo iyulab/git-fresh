@@ -91,6 +91,28 @@ test('formatHuman: a dry-run success says so without claiming a real update happ
   assert.doesNotMatch(output, /done: fresh\./);
 });
 
+test('formatEntry + formatSummary: usable standalone, and produce the same text formatHuman does', () => {
+  const runResult = {
+    ok: true,
+    main: {
+      ok: true, branch: 'main', head: 'abc1234', strategy: 'fast-forward',
+    },
+    submodules: [
+      {
+        label: 'sub', ok: true, branch: 'main', head: 'def5678', strategy: 'fast-forward',
+      },
+    ],
+  };
+
+  const streamed = [
+    log.formatEntry('main', runResult.main),
+    ...runResult.submodules.map((sub) => log.formatEntry(sub.label, sub)),
+    log.formatSummary(runResult),
+  ].join('\n');
+
+  assert.equal(streamed, log.formatHuman(runResult));
+});
+
 test('formatJson: round-trips the run result verbatim', () => {
   const runResult = {
     ok: true,
