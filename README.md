@@ -17,7 +17,9 @@ never guesses, and it never leaves a repo in a state you didn't ask for.
 - **Safe by construction** — updates a repo only once it's proven there's nothing to lose:
   no uncommitted changes, no unpushed commits, no unverifiable push status.
 - **Recursive** — walks the main repo and every submodule, including submodules of submodules,
-  each against its own configured branch and remote.
+  each against its own configured branch and remote. Each repo's result prints as soon as it's
+  known, so a tree with many submodules shows progress instead of going silent until the whole
+  run finishes.
 - **Zero runtime dependencies**, plain Node.js. Every git command runs through `execFile`
   (never a shell), so there's no shell-injection surface to worry about.
 - **Scriptable** — a distinct exit code per failure reason and a `--json` output mode, so CI or
