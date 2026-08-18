@@ -9,6 +9,13 @@ name: Release
 # The very first release (0.1.0) needs a changeset to exist before this workflow has anything to
 # version/publish — if none exists yet, either publish 0.1.0 by hand once (see the project's
 # publish notes) or run `npx changeset add` before merging to main.
+#
+# node-version is 22, not this package's own `engines.node` floor of 20: `changesets/action@v2`
+# requires `@changesets/cli` v3, which itself declares `engines.node: ^22.11 || ^24 || >=26` (its
+# bin.js calls a Node-22.1+-only API) — so this job's tooling needs a newer Node than the package
+# it's releasing does. `ci.yml` is the actual Node-20-compatibility gate (ubuntu + macos); this
+# job re-running lint/test on a newer Node first is a sanity check before publishing, not that
+# gate.
 
 on:
   push:
@@ -31,7 +38,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
       - run: npm ci
