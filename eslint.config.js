@@ -13,6 +13,8 @@ module.exports = [
         require: 'readonly',
         module: 'writable',
         process: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
       },
     },
     rules: {
