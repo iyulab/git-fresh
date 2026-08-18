@@ -1,0 +1,36 @@
+{
+  "name": "@iyulab/git-fresh",
+  "version": "0.1.0",
+  "description": "Bring a git repo and all its submodules to a fresh, up-to-date state against their remotes, stopping immediately on anything that could lose local work.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iyulab/git-fresh.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "git-fresh": "bin/git-fresh.js"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "lint": "eslint ."
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "git",
+    "submodule",
+    "cli"
+  ],
+  "devDependencies": {
+    "@changesets/cli": "3.0.0",
+    "@eslint/js": "10.0.1",
+    "eslint": "10.8.1"
+  }
+}
